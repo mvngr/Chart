@@ -1,9 +1,25 @@
 #include "serverutility.h"
 
 #include <QDebug>
+#include <QByteArray>
 
 std::atomic<ServerUtility*> ServerUtility::object_ { nullptr }; //инициализируем
 std::mutex ServerUtility::mutex_;
+
+ServerUtility::ServerUtility() :
+    server_(new QTcpServer(this)),
+    udpSender_(new QUdpSocket(this)),
+    broadcastSenderTimer_(this)
+{
+    udpSender_->bind(QHostAddress::Any, broadcastPort);
+
+    broadcastSenderTimer_.setInterval(msecDelayForTimer);
+
+    connect(&broadcastSenderTimer_, &QTimer::timeout, this, &ServerUtility::slotSendBroadcast);
+    connect(server_.get(), &QTcpServer::newConnection, this, &ServerUtility::slotNewConnection);
+
+    broadcastSenderTimer_.start();
+}
 
 ServerUtility::~ServerUtility()
 {
@@ -47,10 +63,6 @@ void ServerUtility::start()
  */
 void ServerUtility::start(bool &isOk)
 {
-    server_.reset(new QTcpServer(this));
-    connect(server_.get(), &QTcpServer::newConnection, this, &ServerUtility::slotNewConnection);
-
-    quint16 port = 18383; //TODO Вынести в настройки
     if(server_->listen(QHostAddress::Any, port))
         qDebug() << tr("Сервер запущен. Используемый порт: %1").arg(port);
     else
@@ -58,6 +70,9 @@ void ServerUtility::start(bool &isOk)
     isOk = server_->isListening();
 }
 
+/*!
+ * \brief Отвечает за приём данных на стороне сервера
+ */
 void ServerUtility::slotNewConnection()
 {
     while(server_->hasPendingConnections())
@@ -74,6 +89,9 @@ void ServerUtility::slotNewConnection()
     }
 }
 
+/*!
+ * \brief Посылает сообщения на закрытие соединения
+ */
 void ServerUtility::slotDisconnectClients()
 {
     for(const std::pair<int, std::shared_ptr<QTcpSocket>> &socket : sockets_) //проходимся по сокетам
@@ -86,4 +104,14 @@ void ServerUtility::slotDisconnectClients()
 void ServerUtility::slotListenClinet()
 {
     //TODO
+}
+
+/*!
+ * \brief Отрпавляет широковещательные пакеты для обнаружения сервера
+ */
+void ServerUtility::slotSendBroadcast()
+{
+    QByteArray data;
+    data = {12,1}; //тестовая дата
+    udpSender_->writeDatagram(data, QHostAddress::Broadcast, broadcastPort);
 }
